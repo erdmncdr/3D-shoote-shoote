@@ -23,6 +23,13 @@ function HUD() {
     return 'text-red-400';
   };
 
+  const getAmmoColor = (ammo: number, magazineSize: number = 30) => {
+    const percentage = (ammo / magazineSize) * 100;
+    if (percentage > 30) return 'text-yellow-400';
+    if (percentage > 0) return 'text-red-400 animate-pulse';
+    return 'text-red-600 animate-pulse';
+  };
+
   return (
     <>
       {/* Top HUD */}
@@ -56,26 +63,16 @@ function HUD() {
         </div>
       </div>
 
-      {/* Crosshair */}
-      <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none">
-        <div className="relative w-8 h-8">
-          <div className="absolute top-1/2 left-0 w-3 h-0.5 bg-white/80 -translate-y-1/2"></div>
-          <div className="absolute top-1/2 right-0 w-3 h-0.5 bg-white/80 -translate-y-1/2"></div>
-          <div className="absolute left-1/2 top-0 w-0.5 h-3 bg-white/80 -translate-x-1/2"></div>
-          <div className="absolute left-1/2 bottom-0 w-0.5 h-3 bg-white/80 -translate-x-1/2"></div>
-        </div>
-      </div>
-
       {/* Bottom HUD */}
       <div className="absolute bottom-0 left-0 right-0 p-4 flex justify-between items-end pointer-events-none">
         <div className="bg-black/50 p-3 rounded">
-          <div className="text-yellow-400 text-2xl font-bold font-mono">
+          <div className={`text-2xl font-bold font-mono ${getAmmoColor(localPlayer?.ammo || 0)}`}>
             {localPlayer?.ammo || 0} / {localPlayer?.reserveAmmo || 0}
           </div>
           <div className="text-gray-300 text-sm uppercase">
             {formatWeaponName(localPlayer?.currentWeapon || 'assault_rifle')}
           </div>
-          <div className="text-gray-500 text-xs mt-1">Press R to Reload</div>
+          <div className="text-gray-500 text-xs mt-1">Press R to Reload | 1-5 Change Weapon</div>
         </div>
 
         <div className="bg-black/50 p-2 rounded text-xs text-gray-300">

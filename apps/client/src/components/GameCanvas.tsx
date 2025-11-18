@@ -65,7 +65,8 @@ function GameCanvas({ canvasRef, networkService }: GameCanvasProps) {
     camera.minZ = 0.1;
 
     // Apply FOV from settings (convert degrees to radians)
-    camera.fov = (settings.fieldOfView * Math.PI) / 180;
+    const baseFov = (settings.fieldOfView * Math.PI) / 180;
+    camera.fov = baseFov;
 
     // Create lighting
     const light = new HemisphericLight('light', new Vector3(0, 1, 0), scene);
@@ -241,6 +242,10 @@ function GameCanvas({ canvasRef, networkService }: GameCanvasProps) {
       // Update camera rotation from input
       camera.rotation.y = input.mouseX;
       camera.rotation.x = input.mouseY;
+
+      // Sprint FOV effect - increase FOV when sprinting for speed sensation
+      const targetFov = input.sprint ? baseFov * 1.1 : baseFov;
+      camera.fov += (targetFov - camera.fov) * 0.1; // Smooth lerp
 
       // Send input to server
       networkService.sendInput(input);

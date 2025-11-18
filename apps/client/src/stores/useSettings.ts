@@ -8,6 +8,7 @@ export interface GameSettings {
   invertYAxis: boolean;
   volume: number;
   showFPS: boolean;
+  showCrosshair: boolean;
 }
 
 const defaultSettings: GameSettings = {
@@ -17,6 +18,7 @@ const defaultSettings: GameSettings = {
   invertYAxis: false,
   volume: 50,
   showFPS: false,
+  showCrosshair: true,
 };
 
 interface SettingsStore {

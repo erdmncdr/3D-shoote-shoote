@@ -8,10 +8,14 @@ import HitMarker from './HitMarker';
 import DamageIndicator from './DamageIndicator';
 import Scoreboard from './Scoreboard';
 import RespawnTimer from './RespawnTimer';
+import Crosshair from './Crosshair';
+import LowHealthEffect from './LowHealthEffect';
+import DeathScreen from './DeathScreen';
 import { NetworkService, ConnectionState, type KillFeedEvent } from '../services/NetworkService';
 import { AuthService } from '../services/AuthService';
 import { useGameStore } from '../stores/useGameStore';
 import { useAuthStore } from '../stores/useAuthStore';
+import { audioManager } from '../utils/audioManager';
 
 const authService = new AuthService();
 
@@ -35,6 +39,11 @@ function GameView() {
   const [damageEvents, setDamageEvents] = useState<DamageEvent[]>([]);
   const [showScoreboard, setShowScoreboard] = useState(false);
   const [respawnTime, setRespawnTime] = useState<number | null>(null);
+  const [deathInfo, setDeathInfo] = useState<{
+    killerName?: string;
+    weapon?: string;
+    isHeadshot?: boolean;
+  } | null>(null);
   const navigate = useNavigate();
 
   const updateState = useGameStore((state) => state.updateState);
@@ -91,9 +100,15 @@ function GameView() {
             },
           ]);
 
-          // Show hit marker if we hit someone
+          // Play damage sound if we took damage
+          if (data.targetId === sessionId) {
+            audioManager.playDamageSound();
+          }
+
+          // Show hit marker and play sound if we hit someone
           if (data.isHit) {
             setHitMarker({ show: true, isHeadshot: data.isHeadshot });
+            audioManager.playHitSound(data.isHeadshot);
             setTimeout(() => setHitMarker({ show: false, isHeadshot: false }), 100);
           }
         });
@@ -102,9 +117,18 @@ function GameView() {
         networkService.onPlayerDied((data) => {
           console.log('💀 Player died:', data);
 
-          // Set respawn time (5 seconds from now)
+          // Set respawn time and death info
           if (data.victimId === sessionId) {
             setRespawnTime(Date.now() + 5000);
+            setDeathInfo({
+              killerName: data.killerName,
+              weapon: data.weapon,
+              isHeadshot: data.isHeadshot,
+            });
+            audioManager.playDeathSound();
+          } else if (data.killerId === sessionId) {
+            // We got a kill
+            audioManager.playKillSound();
           }
         });
 
@@ -112,6 +136,7 @@ function GameView() {
         networkService.onPlayerRespawned((data: { playerId: string }) => {
           if (data.playerId === sessionId) {
             setRespawnTime(null);
+            setDeathInfo(null);
           }
         });
 
@@ -218,11 +243,20 @@ function GameView() {
     <div className="relative h-full w-full">
       <GameCanvas canvasRef={canvasRef} networkService={networkServiceRef.current} />
       <HUD />
+      <Crosshair weaponType={localPlayer?.currentWeapon} />
+      <LowHealthEffect health={localPlayer?.health || 100} />
       <KillFeed events={killFeedEvents} />
       <ConnectionStatus connectionState={connectionState} ping={ping} />
       <HitMarker show={hitMarker.show} isHeadshot={hitMarker.isHeadshot} />
       <DamageIndicator damageEvents={damageEvents} />
       <Scoreboard visible={showScoreboard} />
+      {localPlayer && !localPlayer.isAlive && deathInfo && (
+        <DeathScreen
+          killerName={deathInfo.killerName}
+          weapon={deathInfo.weapon}
+          isHeadshot={deathInfo.isHeadshot}
+        />
+      )}
       {respawnTime && localPlayer && !localPlayer.isAlive && (
         <RespawnTimer respawnTime={respawnTime} />
       )}

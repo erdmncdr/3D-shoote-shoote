@@ -6,6 +6,11 @@ function HUD() {
   const timeRemaining = useGameStore((state) => state.timeRemaining);
   const localPlayer = useGameStore((state) => state.getLocalPlayer());
 
+  // Format weapon name for display
+  const formatWeaponName = (weapon: string) => {
+    return weapon.replace(/_/g, ' ').toUpperCase();
+  };
+
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -68,12 +73,13 @@ function HUD() {
             {localPlayer?.ammo || 0} / {localPlayer?.reserveAmmo || 0}
           </div>
           <div className="text-gray-300 text-sm uppercase">
-            {localPlayer?.currentWeapon?.replace('_', ' ') || 'ASSAULT RIFLE'}
+            {formatWeaponName(localPlayer?.currentWeapon || 'assault_rifle')}
           </div>
+          <div className="text-gray-500 text-xs mt-1">Press R to Reload</div>
         </div>
 
         <div className="bg-black/50 p-2 rounded text-xs text-gray-300">
-          <p>WASD - Move | SHIFT - Sprint | SPACE - Jump</p>
+          <p>WASD - Move | SHIFT - Sprint | SPACE - Jump | R - Reload</p>
           <p>LMB - Shoot | ESC - Exit Pointer Lock</p>
         </div>
       </div>

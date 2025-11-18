@@ -1,0 +1,77 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  username  String   @unique
+  password  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  profile PlayerProfile?
+  matches MatchPlayer[]
+}
+
+model PlayerProfile {
+  id         String   @id @default(uuid())
+  userId     String   @unique
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  nickname   String
+  level      Int      @default(1)
+  xp         Int      @default(0)
+  rank       String   @default("Bronze")
+  mmr        Int      @default(1000)
+
+  totalGames Int      @default(0)
+  wins       Int      @default(0)
+  losses     Int      @default(0)
+  kills      Int      @default(0)
+  deaths     Int      @default(0)
+  assists    Int      @default(0)
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model Match {
+  id          String   @id @default(uuid())
+  map         String
+  mode        String
+  startTime   DateTime @default(now())
+  endTime     DateTime?
+  duration    Int?
+
+  blueScore   Int      @default(0)
+  redScore    Int      @default(0)
+  winningTeam String?
+
+  players     MatchPlayer[]
+
+  createdAt   DateTime @default(now())
+}
+
+model MatchPlayer {
+  id       String @id @default(uuid())
+  matchId  String
+  match    Match  @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  team     String
+  kills    Int    @default(0)
+  deaths   Int    @default(0)
+  assists  Int    @default(0)
+  damage   Int    @default(0)
+  headshots Int   @default(0)
+  xpGained Int    @default(0)
+
+  @@unique([matchId, userId])
+}

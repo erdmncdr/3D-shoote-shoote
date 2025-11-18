@@ -12,6 +12,7 @@ import {
 } from '@babylonjs/core';
 import { NetworkService } from '../services/NetworkService';
 import { useGameStore } from '../stores/useGameStore';
+import { useSettings } from '../stores/useSettings';
 import { InputState } from '@shared/types';
 
 interface GameCanvasProps {
@@ -39,6 +40,7 @@ function GameCanvas({ canvasRef, networkService }: GameCanvasProps) {
 
   const players = useGameStore((state) => state.players);
   const sessionId = useGameStore((state) => state.sessionId);
+  const settings = useSettings((state) => state.settings);
 
   useEffect(() => {
     if (!canvasRef.current || !networkService) return;
@@ -66,19 +68,32 @@ function GameCanvas({ canvasRef, networkService }: GameCanvasProps) {
     const light = new HemisphericLight('light', new Vector3(0, 1, 0), scene);
     light.intensity = 0.7;
 
+    // Create reusable materials (performance optimization)
+    const materials = {
+      ground: new StandardMaterial('groundMat', scene),
+      building: new StandardMaterial('buildingMat', scene),
+      wall: new StandardMaterial('wallMat', scene),
+      blueTeam: new StandardMaterial('blueTeamMat', scene),
+      redTeam: new StandardMaterial('redTeamMat', scene),
+      weapon: new StandardMaterial('weaponMat', scene),
+    };
+
+    materials.ground.diffuseColor = new Color3(0.4, 0.4, 0.4);
+    materials.building.diffuseColor = new Color3(0.6, 0.3, 0.1);
+    materials.wall.diffuseColor = new Color3(0.5, 0.5, 0.5);
+    materials.blueTeam.diffuseColor = new Color3(0.2, 0.4, 1.0);
+    materials.redTeam.diffuseColor = new Color3(1.0, 0.2, 0.2);
+    materials.weapon.diffuseColor = new Color3(0.1, 0.1, 0.1);
+
     // Create ground
     const ground = MeshBuilder.CreateGround('ground', { width: 100, height: 100 }, scene);
-    const groundMaterial = new StandardMaterial('groundMat', scene);
-    groundMaterial.diffuseColor = new Color3(0.4, 0.4, 0.4);
-    ground.material = groundMaterial;
+    ground.material = materials.ground;
 
     // Create test map layout
     const createBuilding = (x: number, z: number, width: number, height: number, depth: number) => {
       const building = MeshBuilder.CreateBox('building', { width, height, depth }, scene);
       building.position = new Vector3(x, height / 2, z);
-      const material = new StandardMaterial('buildingMat', scene);
-      material.diffuseColor = new Color3(0.6, 0.3, 0.1);
-      building.material = material;
+      building.material = materials.building;
       return building;
     };
 
@@ -94,9 +109,7 @@ function GameCanvas({ canvasRef, networkService }: GameCanvasProps) {
       const wall = MeshBuilder.CreateBox('wall', { width: 0.5, height: 2, depth: 5 }, scene);
       wall.position = new Vector3(Math.random() * 40 - 20, 1, Math.random() * 40 - 20);
       wall.rotation.y = Math.random() * Math.PI;
-      const wallMaterial = new StandardMaterial('wallMat', scene);
-      wallMaterial.diffuseColor = new Color3(0.5, 0.5, 0.5);
-      wall.material = wallMaterial;
+      wall.material = materials.wall;
     }
 
     // Function to create player mesh
@@ -113,12 +126,10 @@ function GameCanvas({ canvasRef, networkService }: GameCanvasProps) {
       head.position.y = 1.0;
       head.parent = body;
 
-      // Material based on team
-      const material = new StandardMaterial(`player_${playerId}_mat`, scene);
-      material.diffuseColor =
-        team === 'blue' ? new Color3(0.2, 0.4, 1.0) : new Color3(1.0, 0.2, 0.2);
-      body.material = material;
-      head.material = material;
+      // Use pre-created materials based on team
+      const teamMaterial = team === 'blue' ? materials.blueTeam : materials.redTeam;
+      body.material = teamMaterial;
+      head.material = teamMaterial;
 
       // Weapon (simple box)
       const weapon = MeshBuilder.CreateBox(
@@ -128,9 +139,7 @@ function GameCanvas({ canvasRef, networkService }: GameCanvasProps) {
       );
       weapon.position = new Vector3(0.3, 0.3, 0.3);
       weapon.parent = body;
-      const weaponMat = new StandardMaterial(`weapon_${playerId}_mat`, scene);
-      weaponMat.diffuseColor = new Color3(0.1, 0.1, 0.1);
-      weapon.material = weaponMat;
+      weapon.material = materials.weapon;
 
       return body;
     };
@@ -142,6 +151,12 @@ function GameCanvas({ canvasRef, networkService }: GameCanvasProps) {
 
     const handleKeyDown = (e: KeyboardEvent) => {
       keys[e.code] = true;
+
+      // Reload on R key
+      if (e.code === 'KeyR') {
+        networkService.sendReload();
+      }
+
       updateInputState();
     };
 
@@ -193,12 +208,15 @@ function GameCanvas({ canvasRef, networkService }: GameCanvasProps) {
     const inputInterval = setInterval(() => {
       const input = inputStateRef.current;
 
-      // Update mouse rotation
-      const sensitivity = 0.002;
+      // Update mouse rotation with user settings
+      const baseSensitivity = 0.002;
+      const sensitivity = baseSensitivity * (settings.mouseSensitivity / 50); // 50 is default
+      const yMultiplier = settings.invertYAxis ? 1 : -1; // Invert Y axis if enabled
+
       input.mouseX += mouseMovementX * sensitivity;
       input.mouseY = Math.max(
         -Math.PI / 2,
-        Math.min(Math.PI / 2, input.mouseY - mouseMovementY * sensitivity)
+        Math.min(Math.PI / 2, input.mouseY + mouseMovementY * sensitivity * yMultiplier)
       );
 
       mouseMovementX = 0;
@@ -284,7 +302,7 @@ function GameCanvas({ canvasRef, networkService }: GameCanvasProps) {
       scene.dispose();
       engine.dispose();
     };
-  }, [canvasRef, networkService, players, sessionId]);
+  }, [canvasRef, networkService, players, sessionId, settings]);
 
   return <canvas ref={canvasRef} className="w-full h-full outline-none" tabIndex={0} />;
 }

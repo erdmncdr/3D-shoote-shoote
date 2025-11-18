@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import GameCanvas from './GameCanvas';
 import HUD from './HUD';
-import { NetworkService } from '../services/NetworkService';
+import KillFeed from './KillFeed';
+import ConnectionStatus from './ConnectionStatus';
+import { NetworkService, ConnectionState, type KillFeedEvent } from '../services/NetworkService';
 import { AuthService } from '../services/AuthService';
 import { useGameStore } from '../stores/useGameStore';
 import { useAuthStore } from '../stores/useAuthStore';
@@ -14,6 +16,11 @@ function GameView() {
   const networkServiceRef = useRef<NetworkService | null>(null);
   const [isConnecting, setIsConnecting] = useState(true);
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [connectionState, setConnectionState] = useState<ConnectionState>(
+    ConnectionState.CONNECTING
+  );
+  const [ping, setPing] = useState(0);
+  const [killFeedEvents, setKillFeedEvents] = useState<KillFeedEvent[]>([]);
   const navigate = useNavigate();
 
   const updateState = useGameStore((state) => state.updateState);
@@ -56,12 +63,32 @@ function GameView() {
 
         // Listen for damage events
         networkService.onDamage((data) => {
-          console.log('Damage received:', data);
+          console.log('💥 Damage received:', data);
         });
 
         // Listen for death events
         networkService.onPlayerDied((data) => {
-          console.log('Player died:', data);
+          console.log('💀 Player died:', data);
+        });
+
+        // Listen for kill feed events
+        networkService.onKillFeed((event) => {
+          setKillFeedEvents((prev) => [...prev, event]);
+        });
+
+        // Listen for connection state changes
+        networkService.onConnectionStateChanged((state) => {
+          setConnectionState(state);
+          if (state === ConnectionState.FAILED) {
+            setConnectionError('Connection lost. Please try again.');
+          } else if (state === ConnectionState.CONNECTED) {
+            setConnectionError(null);
+          }
+        });
+
+        // Listen for ping updates
+        networkService.onPingUpdate((pingValue) => {
+          setPing(pingValue);
         });
 
         setIsConnecting(false);
@@ -113,7 +140,7 @@ function GameView() {
     );
   }
 
-  if (connectionError) {
+  if (connectionError && connectionState === ConnectionState.FAILED) {
     return (
       <div className="flex h-full w-full items-center justify-center bg-gray-900">
         <div className="text-center max-w-md">
@@ -135,6 +162,8 @@ function GameView() {
     <div className="relative h-full w-full">
       <GameCanvas canvasRef={canvasRef} networkService={networkServiceRef.current} />
       <HUD />
+      <KillFeed events={killFeedEvents} />
+      <ConnectionStatus connectionState={connectionState} ping={ping} />
     </div>
   );
 }

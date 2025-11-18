@@ -19,9 +19,18 @@ interface PlayerInput {
   timestamp: number;
 }
 
+interface PlayerMeta {
+  lastShotTime: number;
+  shotCount: number;
+  lastInputTime: number;
+}
+
+const MAP_BOUNDARY = 50;
+
 export class FpsMatchRoom extends Room<FpsMatchState> {
   maxClients = GAME_CONSTANTS.MAX_PLAYERS_PER_MATCH;
   private playerInputs: Map<string, PlayerInput> = new Map();
+  private playerMeta: Map<string, PlayerMeta> = new Map();
   private gameLoopInterval: ReturnType<typeof setInterval>;
   private readonly TICK_RATE = GAME_CONSTANTS.TICK_RATE;
   private readonly TICK_INTERVAL = 1000 / this.TICK_RATE;
@@ -33,6 +42,12 @@ export class FpsMatchRoom extends Room<FpsMatchState> {
 
     // Set up message handlers
     this.onMessage('input', (client, message: InputState) => {
+      // Validate input
+      if (!this.validateInput(message)) {
+        console.warn(`Invalid input from ${client.sessionId}`);
+        return;
+      }
+
       this.playerInputs.set(client.sessionId, {
         forward: message.forward,
         backward: message.backward,
@@ -46,10 +61,31 @@ export class FpsMatchRoom extends Room<FpsMatchState> {
         mouseY: message.mouseY,
         timestamp: message.timestamp,
       });
+
+      // Update last input time for anti-cheat
+      const meta = this.playerMeta.get(client.sessionId);
+      if (meta) {
+        meta.lastInputTime = Date.now();
+      }
     });
 
     this.onMessage('shoot', (client, message: { aimDirection: Vector3Schema }) => {
+      // Validate aim direction
+      if (!this.validateAimDirection(message.aimDirection)) {
+        console.warn(`Invalid aim direction from ${client.sessionId}`);
+        return;
+      }
+
       this.handleShooting(client, message.aimDirection);
+    });
+
+    this.onMessage('reload', (client) => {
+      this.handleReload(client);
+    });
+
+    this.onMessage('ping', (client) => {
+      // Respond to ping for latency measurement
+      client.send('pong');
     });
 
     // Start game loop
@@ -109,6 +145,13 @@ export class FpsMatchRoom extends Room<FpsMatchState> {
       timestamp: Date.now(),
     });
 
+    // Initialize metadata for rate limiting
+    this.playerMeta.set(client.sessionId, {
+      lastShotTime: 0,
+      shotCount: 0,
+      lastInputTime: Date.now(),
+    });
+
     console.log(`Player spawned at (${spawnX}, 1.6, ${spawnZ}) on ${team} team`);
   }
 
@@ -117,6 +160,7 @@ export class FpsMatchRoom extends Room<FpsMatchState> {
 
     this.state.players.delete(client.sessionId);
     this.playerInputs.delete(client.sessionId);
+    this.playerMeta.delete(client.sessionId);
 
     // If no players left, dispose room
     if (this.state.players.size === 0) {
@@ -129,6 +173,29 @@ export class FpsMatchRoom extends Room<FpsMatchState> {
     if (this.gameLoopInterval) {
       clearInterval(this.gameLoopInterval);
     }
+  }
+
+  private validateInput(input: InputState): boolean {
+    // Check timestamp is recent (within last 5 seconds)
+    const now = Date.now();
+    if (Math.abs(now - input.timestamp) > 5000) {
+      return false;
+    }
+
+    // Validate mouse rotation is within reasonable bounds
+    if (Math.abs(input.mouseX) > Math.PI * 4 || Math.abs(input.mouseY) > Math.PI * 4) {
+      return false;
+    }
+
+    return true;
+  }
+
+  private validateAimDirection(direction: Vector3Schema): boolean {
+    if (!direction) return false;
+
+    // Check that direction is a unit vector (or close to it)
+    const length = Math.sqrt(direction.x ** 2 + direction.y ** 2 + direction.z ** 2);
+    return length > 0.5 && length < 2; // Allow some margin for floating point
   }
 
   private startGameLoop() {
@@ -171,8 +238,10 @@ export class FpsMatchRoom extends Room<FpsMatchState> {
     // Normalize diagonal movement
     if (moveX !== 0 || moveZ !== 0) {
       const length = Math.sqrt(moveX * moveX + moveZ * moveZ);
-      moveX /= length;
-      moveZ /= length;
+      if (length > 0) {
+        moveX /= length;
+        moveZ /= length;
+      }
     }
 
     // Calculate speed
@@ -215,9 +284,10 @@ export class FpsMatchRoom extends Room<FpsMatchState> {
     player.rotation.y = yaw;
     player.rotation.x = input.mouseY;
 
-    // Basic world bounds
-    player.position.x = Math.max(-50, Math.min(50, player.position.x));
-    player.position.z = Math.max(-50, Math.min(50, player.position.z));
+    // Enforce map boundaries
+    player.position.x = Math.max(-MAP_BOUNDARY, Math.min(MAP_BOUNDARY, player.position.x));
+    player.position.z = Math.max(-MAP_BOUNDARY, Math.min(MAP_BOUNDARY, player.position.z));
+    player.position.y = Math.max(0, Math.min(100, player.position.y)); // Prevent falling through or flying too high
   }
 
   private handleShooting(client: Client, aimDirection: Vector3Schema) {
@@ -231,6 +301,28 @@ export class FpsMatchRoom extends Room<FpsMatchState> {
     const weaponConfig = WEAPON_CONFIGS[player.currentWeapon as WeaponType];
     if (!weaponConfig) return;
 
+    // Fire rate limiting
+    const meta = this.playerMeta.get(client.sessionId);
+    if (!meta) return;
+
+    const now = Date.now();
+    const timeSinceLastShot = now - meta.lastShotTime;
+    const minTimeBetweenShots = (60 / weaponConfig.fireRate) * 1000; // Convert RPM to ms
+
+    if (timeSinceLastShot < minTimeBetweenShots) {
+      // Too soon to shoot again
+      return;
+    }
+
+    // Anti-cheat: Check for rapid fire exploits (more than 2x fire rate)
+    if (timeSinceLastShot < minTimeBetweenShots / 2) {
+      console.warn(`Possible rapid fire exploit from ${client.sessionId}`);
+      return;
+    }
+
+    meta.lastShotTime = now;
+    meta.shotCount++;
+
     // Consume ammo
     player.ammo--;
 
@@ -243,6 +335,31 @@ export class FpsMatchRoom extends Room<FpsMatchState> {
     }
   }
 
+  private handleReload(client: Client) {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || !player.isAlive) return;
+
+    // Get weapon config
+    const weaponConfig = WEAPON_CONFIGS[player.currentWeapon as WeaponType];
+    if (!weaponConfig) return;
+
+    // Check if already at max ammo
+    if (player.ammo >= weaponConfig.magazineSize) return;
+
+    // Check if has reserve ammo
+    if (player.reserveAmmo <= 0) return;
+
+    // Calculate ammo to reload
+    const ammoNeeded = weaponConfig.magazineSize - player.ammo;
+    const ammoToReload = Math.min(ammoNeeded, player.reserveAmmo);
+
+    // Reload
+    player.ammo += ammoToReload;
+    player.reserveAmmo -= ammoToReload;
+
+    console.log(`Player ${player.username} reloaded ${ammoToReload} rounds`);
+  }
+
   private performRaycast(
     origin: Vector3Schema,
     direction: Vector3Schema,
@@ -252,26 +369,60 @@ export class FpsMatchRoom extends Room<FpsMatchState> {
     let closestDistance = maxDistance;
     let isHeadshot = false;
 
+    // Normalize direction
+    const dirLength = Math.sqrt(direction.x ** 2 + direction.y ** 2 + direction.z ** 2);
+    if (dirLength === 0) return { hit: false, isHeadshot: false };
+
+    const normDir = {
+      x: direction.x / dirLength,
+      y: direction.y / dirLength,
+      z: direction.z / dirLength,
+    };
+
     // Check all other players
     this.state.players.forEach((player) => {
       if (!player.isAlive) return;
       if (player.position === origin) return; // Don't hit self
 
-      // Simple sphere collision check (in real game, use proper raycast)
-      const dx = player.position.x - origin.x;
-      const dy = player.position.y - origin.y;
-      const dz = player.position.z - origin.z;
-      const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      // Calculate vector from origin to player
+      const toPlayer = {
+        x: player.position.x - origin.x,
+        y: player.position.y - origin.y,
+        z: player.position.z - origin.z,
+      };
 
-      // Check if player is in direction of ray (simplified)
-      if (distance < closestDistance && distance < maxDistance) {
+      // Project toPlayer onto direction vector
+      const dot = toPlayer.x * normDir.x + toPlayer.y * normDir.y + toPlayer.z * normDir.z;
+
+      // If behind the origin, skip
+      if (dot < 0) return;
+
+      // If beyond max distance, skip
+      if (dot > maxDistance) return;
+
+      // Calculate closest point on ray to player
+      const closestPoint = {
+        x: origin.x + normDir.x * dot,
+        y: origin.y + normDir.y * dot,
+        z: origin.z + normDir.z * dot,
+      };
+
+      // Calculate distance from player to closest point
+      const dx = player.position.x - closestPoint.x;
+      const dy = player.position.y - closestPoint.y;
+      const dz = player.position.z - closestPoint.z;
+      const distanceToRay = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+      // Hit radius (player body radius)
+      const hitRadius = 0.5;
+
+      if (distanceToRay < hitRadius && dot < closestDistance) {
         closestHit = player;
-        closestDistance = distance;
+        closestDistance = dot;
 
         // Check if headshot (head is at y + 0.6 to y + 0.9 from player position)
         const headY = player.position.y + 0.7;
-        const targetY = origin.y + direction.y * distance;
-        isHeadshot = Math.abs(targetY - headY) < 0.3;
+        isHeadshot = Math.abs(closestPoint.y - headY) < 0.25;
       }
     });
 
@@ -289,6 +440,9 @@ export class FpsMatchRoom extends Room<FpsMatchState> {
     isHeadshot: boolean
   ) {
     if (!target.isAlive) return;
+
+    // Prevent team damage
+    if (target.team === attacker.team) return;
 
     // Calculate actual damage
     let damage = baseDamage;
@@ -310,7 +464,7 @@ export class FpsMatchRoom extends Room<FpsMatchState> {
 
     // Check death
     if (target.health <= 0) {
-      this.handlePlayerDeath(target, attacker);
+      this.handlePlayerDeath(target, attacker, isHeadshot);
     }
 
     // Broadcast damage event
@@ -323,7 +477,7 @@ export class FpsMatchRoom extends Room<FpsMatchState> {
     });
   }
 
-  private handlePlayerDeath(victim: PlayerSchema, killer: PlayerSchema) {
+  private handlePlayerDeath(victim: PlayerSchema, killer: PlayerSchema, isHeadshot: boolean) {
     victim.isAlive = false;
     victim.health = 0;
     victim.deaths++;
@@ -344,6 +498,17 @@ export class FpsMatchRoom extends Room<FpsMatchState> {
       weapon: killer.currentWeapon,
     });
 
+    // Broadcast kill feed event
+    this.broadcast('kill_feed', {
+      killerId: killer.id,
+      killerName: killer.username,
+      victimId: victim.id,
+      victimName: victim.username,
+      weapon: killer.currentWeapon,
+      isHeadshot,
+      timestamp: Date.now(),
+    });
+
     // Schedule respawn
     setTimeout(() => {
       this.respawnPlayer(victim);
@@ -354,6 +519,13 @@ export class FpsMatchRoom extends Room<FpsMatchState> {
     player.isAlive = true;
     player.health = GAME_CONSTANTS.MAX_HEALTH;
     player.armor = GAME_CONSTANTS.MAX_ARMOR;
+
+    // Reset ammo
+    const weaponConfig = WEAPON_CONFIGS[player.currentWeapon as WeaponType];
+    if (weaponConfig) {
+      player.ammo = weaponConfig.magazineSize;
+      player.reserveAmmo = weaponConfig.magazineSize * 3;
+    }
 
     // Respawn at team spawn
     const spawnX = player.team === 'blue' ? -30 : 30;

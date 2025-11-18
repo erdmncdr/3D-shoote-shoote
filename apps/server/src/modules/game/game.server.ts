@@ -19,7 +19,8 @@ export class GameServer {
     return this.gameServer;
   }
 
-  public async shutdown() {
+  public async gracefulShutdown(): Promise<void> {
+    console.log('🎮 Shutting down Colyseus Game Server...');
     await this.gameServer.gracefullyShutdown();
   }
 }

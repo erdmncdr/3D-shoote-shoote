@@ -54,6 +54,7 @@ export class NetworkService {
   private onPlayerLeftCallback: ((playerId: string) => void) | null = null;
   private onDamageCallback: ((data: any) => void) | null = null;
   private onPlayerDiedCallback: ((data: any) => void) | null = null;
+  private onPlayerRespawnedCallback: ((data: any) => void) | null = null;
   private onKillFeedCallback: ((event: KillFeedEvent) => void) | null = null;
   private onConnectionStateChangedCallback: ((state: ConnectionState) => void) | null = null;
   private onPingUpdateCallback: ((ping: number) => void) | null = null;
@@ -169,6 +170,9 @@ export class NetworkService {
     // Listen for respawn events
     this.room.onMessage('player_respawned', (data) => {
       console.log('🔄 Player respawned:', data);
+      if (this.onPlayerRespawnedCallback) {
+        this.onPlayerRespawnedCallback(data);
+      }
     });
 
     // Listen for match end
@@ -275,6 +279,12 @@ export class NetworkService {
     }
   }
 
+  sendWeaponSwitch(weapon: string) {
+    if (this.room && this.connectionState === ConnectionState.CONNECTED) {
+      this.room.send('switch_weapon', { weapon });
+    }
+  }
+
   onStateUpdate(callback: (state: GameState) => void) {
     this.onStateUpdateCallback = callback;
   }
@@ -293,6 +303,10 @@ export class NetworkService {
 
   onPlayerDied(callback: (data: any) => void) {
     this.onPlayerDiedCallback = callback;
+  }
+
+  onPlayerRespawned(callback: (data: any) => void) {
+    this.onPlayerRespawnedCallback = callback;
   }
 
   onKillFeed(callback: (event: KillFeedEvent) => void) {

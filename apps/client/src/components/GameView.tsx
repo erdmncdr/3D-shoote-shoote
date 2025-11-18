@@ -4,12 +4,22 @@ import GameCanvas from './GameCanvas';
 import HUD from './HUD';
 import KillFeed from './KillFeed';
 import ConnectionStatus from './ConnectionStatus';
+import HitMarker from './HitMarker';
+import DamageIndicator from './DamageIndicator';
+import Scoreboard from './Scoreboard';
+import RespawnTimer from './RespawnTimer';
 import { NetworkService, ConnectionState, type KillFeedEvent } from '../services/NetworkService';
 import { AuthService } from '../services/AuthService';
 import { useGameStore } from '../stores/useGameStore';
 import { useAuthStore } from '../stores/useAuthStore';
 
 const authService = new AuthService();
+
+interface DamageEvent {
+  direction: number;
+  timestamp: number;
+  id: string;
+}
 
 function GameView() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -21,11 +31,16 @@ function GameView() {
   );
   const [ping, setPing] = useState(0);
   const [killFeedEvents, setKillFeedEvents] = useState<KillFeedEvent[]>([]);
+  const [hitMarker, setHitMarker] = useState({ show: false, isHeadshot: false });
+  const [damageEvents, setDamageEvents] = useState<DamageEvent[]>([]);
+  const [showScoreboard, setShowScoreboard] = useState(false);
+  const [respawnTime, setRespawnTime] = useState<number | null>(null);
   const navigate = useNavigate();
 
   const updateState = useGameStore((state) => state.updateState);
   const setSessionId = useGameStore((state) => state.setSessionId);
   const user = useAuthStore((state) => state.user);
+  const localPlayer = useGameStore((state) => state.getLocalPlayer());
 
   useEffect(() => {
     // Check authentication
@@ -64,11 +79,40 @@ function GameView() {
         // Listen for damage events
         networkService.onDamage((data) => {
           console.log('💥 Damage received:', data);
+
+          // Add damage indicator
+          const direction = Math.atan2(data.direction?.x || 0, data.direction?.z || 0);
+          setDamageEvents((prev) => [
+            ...prev,
+            {
+              direction,
+              timestamp: Date.now(),
+              id: `${Date.now()}-${Math.random()}`,
+            },
+          ]);
+
+          // Show hit marker if we hit someone
+          if (data.isHit) {
+            setHitMarker({ show: true, isHeadshot: data.isHeadshot });
+            setTimeout(() => setHitMarker({ show: false, isHeadshot: false }), 100);
+          }
         });
 
         // Listen for death events
         networkService.onPlayerDied((data) => {
           console.log('💀 Player died:', data);
+
+          // Set respawn time (5 seconds from now)
+          if (data.victimId === sessionId) {
+            setRespawnTime(Date.now() + 5000);
+          }
+        });
+
+        // Listen for respawn events
+        networkService.onPlayerRespawned((data: { playerId: string }) => {
+          if (data.playerId === sessionId) {
+            setRespawnTime(null);
+          }
         });
 
         // Listen for kill feed events
@@ -116,14 +160,26 @@ function GameView() {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         document.exitPointerLock();
+        setShowScoreboard(false);
+      } else if (e.key === 'Tab') {
+        e.preventDefault();
+        setShowScoreboard((prev) => !prev);
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Tab') {
+        e.preventDefault();
       }
     };
 
     document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('keyup', handleKeyUp);
 
     // Cleanup
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('keyup', handleKeyUp);
       canvas?.removeEventListener('click', handleCanvasClick);
       networkService.disconnect();
     };
@@ -164,6 +220,12 @@ function GameView() {
       <HUD />
       <KillFeed events={killFeedEvents} />
       <ConnectionStatus connectionState={connectionState} ping={ping} />
+      <HitMarker show={hitMarker.show} isHeadshot={hitMarker.isHeadshot} />
+      <DamageIndicator damageEvents={damageEvents} />
+      <Scoreboard visible={showScoreboard} />
+      {respawnTime && localPlayer && !localPlayer.isAlive && (
+        <RespawnTimer respawnTime={respawnTime} />
+      )}
     </div>
   );
 }

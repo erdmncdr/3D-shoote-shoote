@@ -64,6 +64,9 @@ function GameCanvas({ canvasRef, networkService }: GameCanvasProps) {
     camera.angularSensibility = 2000;
     camera.minZ = 0.1;
 
+    // Apply FOV from settings (convert degrees to radians)
+    camera.fov = (settings.fieldOfView * Math.PI) / 180;
+
     // Create lighting
     const light = new HemisphericLight('light', new Vector3(0, 1, 0), scene);
     light.intensity = 0.7;
@@ -155,6 +158,19 @@ function GameCanvas({ canvasRef, networkService }: GameCanvasProps) {
       // Reload on R key
       if (e.code === 'KeyR') {
         networkService.sendReload();
+      }
+
+      // Weapon switching on 1-5 keys
+      if (e.code === 'Digit1') {
+        networkService.sendWeaponSwitch('assault_rifle');
+      } else if (e.code === 'Digit2') {
+        networkService.sendWeaponSwitch('smg');
+      } else if (e.code === 'Digit3') {
+        networkService.sendWeaponSwitch('shotgun');
+      } else if (e.code === 'Digit4') {
+        networkService.sendWeaponSwitch('sniper');
+      } else if (e.code === 'Digit5') {
+        networkService.sendWeaponSwitch('pistol');
       }
 
       updateInputState();

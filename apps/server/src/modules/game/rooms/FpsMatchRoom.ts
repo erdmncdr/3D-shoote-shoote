@@ -23,6 +23,7 @@ interface PlayerMeta {
   lastShotTime: number;
   shotCount: number;
   lastInputTime: number;
+  lastDamageTime: number;
 }
 
 const MAP_BOUNDARY = 50;
@@ -81,6 +82,10 @@ export class FpsMatchRoom extends Room<FpsMatchState> {
 
     this.onMessage('reload', (client) => {
       this.handleReload(client);
+    });
+
+    this.onMessage('switch_weapon', (client, message: { weapon: WeaponType }) => {
+      this.handleWeaponSwitch(client, message.weapon);
     });
 
     this.onMessage('ping', (client) => {
@@ -145,11 +150,12 @@ export class FpsMatchRoom extends Room<FpsMatchState> {
       timestamp: Date.now(),
     });
 
-    // Initialize metadata for rate limiting
+    // Initialize metadata for rate limiting and health regeneration
     this.playerMeta.set(client.sessionId, {
       lastShotTime: 0,
       shotCount: 0,
       lastInputTime: Date.now(),
+      lastDamageTime: 0,
     });
 
     console.log(`Player spawned at (${spawnX}, 1.6, ${spawnZ}) on ${team} team`);
@@ -212,6 +218,7 @@ export class FpsMatchRoom extends Room<FpsMatchState> {
         if (!input) return;
 
         this.updatePlayerMovement(player, input, deltaTime);
+        this.updateHealthRegeneration(player, sessionId, deltaTime);
       });
 
       // Update match time
@@ -290,6 +297,26 @@ export class FpsMatchRoom extends Room<FpsMatchState> {
     player.position.y = Math.max(0, Math.min(100, player.position.y)); // Prevent falling through or flying too high
   }
 
+  private updateHealthRegeneration(player: PlayerSchema, sessionId: string, deltaTime: number) {
+    // Only regenerate if player is below max health
+    if (player.health >= GAME_CONSTANTS.MAX_HEALTH) return;
+
+    const meta = this.playerMeta.get(sessionId);
+    if (!meta) return;
+
+    // Constants for health regeneration
+    const REGEN_DELAY = 3000; // 3 seconds after last damage
+    const REGEN_RATE = 10; // 10 HP per second
+
+    const timeSinceLastDamage = Date.now() - meta.lastDamageTime;
+
+    // Start regenerating after delay
+    if (timeSinceLastDamage >= REGEN_DELAY) {
+      const regenAmount = REGEN_RATE * deltaTime;
+      player.health = Math.min(GAME_CONSTANTS.MAX_HEALTH, player.health + regenAmount);
+    }
+  }
+
   private handleShooting(client: Client, aimDirection: Vector3Schema) {
     const player = this.state.players.get(client.sessionId);
     if (!player || !player.isAlive) return;
@@ -358,6 +385,28 @@ export class FpsMatchRoom extends Room<FpsMatchState> {
     player.reserveAmmo -= ammoToReload;
 
     console.log(`Player ${player.username} reloaded ${ammoToReload} rounds`);
+  }
+
+  private handleWeaponSwitch(client: Client, weaponType: WeaponType) {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || !player.isAlive) return;
+
+    // Validate weapon type
+    const weaponConfig = WEAPON_CONFIGS[weaponType];
+    if (!weaponConfig) {
+      console.warn(`Invalid weapon type: ${weaponType}`);
+      return;
+    }
+
+    // Don't switch if already using this weapon
+    if (player.currentWeapon === weaponType) return;
+
+    // Switch weapon
+    player.currentWeapon = weaponType;
+    player.ammo = weaponConfig.magazineSize;
+    player.reserveAmmo = weaponConfig.reserveAmmo;
+
+    console.log(`Player ${player.username} switched to ${weaponConfig.name}`);
   }
 
   private performRaycast(
@@ -461,6 +510,12 @@ export class FpsMatchRoom extends Room<FpsMatchState> {
 
     // Apply remaining to health
     target.health -= damage;
+
+    // Update last damage time for health regeneration
+    const targetMeta = this.playerMeta.get(target.id);
+    if (targetMeta) {
+      targetMeta.lastDamageTime = Date.now();
+    }
 
     // Check death
     if (target.health <= 0) {

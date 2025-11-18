@@ -1,22 +1,30 @@
-import { Controller, Post, Body } from '@nestjs/common';
+import { Controller, Post, Body, Get, UseGuards, Request } from '@nestjs/common';
+import { AuthService } from './auth.service';
+import { RegisterDto, LoginDto } from './dto';
+import { JwtAuthGuard } from './guards/jwt-auth.guard';
 
 @Controller('auth')
 export class AuthController {
+  constructor(private authService: AuthService) {}
+
   @Post('register')
-  async register(@Body() dto: { email: string; password: string; username: string }) {
-    // TODO: Implement registration logic with Prisma
-    return {
-      message: 'Registration endpoint - to be implemented',
-      data: dto,
-    };
+  async register(@Body() dto: RegisterDto) {
+    return this.authService.register(dto);
   }
 
   @Post('login')
-  async login(@Body() _dto: { email: string; password: string }) {
-    // TODO: Implement login logic
-    return {
-      message: 'Login endpoint - to be implemented',
-      accessToken: 'mock-token',
-    };
+  async login(@Body() dto: LoginDto) {
+    return this.authService.login(dto);
+  }
+
+  @Post('refresh')
+  async refresh(@Body() body: { refreshToken: string }) {
+    return this.authService.refreshTokens(body.refreshToken);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('me')
+  async getProfile(@Request() req) {
+    return req.user;
   }
 }

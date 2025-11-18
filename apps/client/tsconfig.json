@@ -9,6 +9,8 @@
     "composite": false,
     "noEmit": true,
     "isolatedModules": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
     "paths": {
       "@shared/*": ["../../packages/shared/src/*"]
     }

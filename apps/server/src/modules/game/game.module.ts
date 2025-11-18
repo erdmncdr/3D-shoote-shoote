@@ -1,6 +1,4 @@
 import { Module } from '@nestjs/common';
 
-@Module({
-  // TODO: Integrate Colyseus game rooms
-})
+@Module({})
 export class GameModule {}

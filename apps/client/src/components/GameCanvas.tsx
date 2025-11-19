@@ -9,11 +9,13 @@ import {
   StandardMaterial,
   Color3,
   AbstractMesh,
+  DynamicTexture,
 } from '@babylonjs/core';
 import { NetworkService } from '../services/NetworkService';
 import { useGameStore } from '../stores/useGameStore';
 import { useSettings } from '../stores/useSettings';
 import { InputState } from '@shared/types';
+import { audioManager } from '../utils/audioManager';
 
 interface GameCanvasProps {
   canvasRef: React.RefObject<HTMLCanvasElement>;
@@ -37,6 +39,8 @@ function GameCanvas({ canvasRef, networkService }: GameCanvasProps) {
     mouseY: 0,
     timestamp: Date.now(),
   });
+  const lastFootstepTimeRef = useRef<number>(0);
+  const wasJumpingRef = useRef<boolean>(false);
 
   const players = useGameStore((state) => state.players);
   const sessionId = useGameStore((state) => state.sessionId);
@@ -117,7 +121,11 @@ function GameCanvas({ canvasRef, networkService }: GameCanvasProps) {
     }
 
     // Function to create player mesh
-    const createPlayerMesh = (playerId: string, team: string): AbstractMesh => {
+    const createPlayerMesh = (
+      playerId: string,
+      team: string,
+      username: string = ''
+    ): AbstractMesh => {
       // Body
       const body = MeshBuilder.CreateCylinder(
         `player_${playerId}_body`,
@@ -145,6 +153,44 @@ function GameCanvas({ canvasRef, networkService }: GameCanvasProps) {
       weapon.parent = body;
       weapon.material = materials.weapon;
 
+      // Name tag (billboarded plane above head)
+      if (username) {
+        const nameTagPlane = MeshBuilder.CreatePlane(
+          `player_${playerId}_nametag`,
+          { width: 2, height: 0.4 },
+          scene
+        );
+        nameTagPlane.position.y = 2.2; // Above head
+        nameTagPlane.parent = body;
+        nameTagPlane.billboardMode = AbstractMesh.BILLBOARDMODE_ALL;
+
+        // Create dynamic texture for text
+        const nameTagTexture = new DynamicTexture(
+          `player_${playerId}_nametag_tex`,
+          { width: 512, height: 128 },
+          scene,
+          false
+        );
+
+        const teamColor = team === 'blue' ? '#4488FF' : '#FF4444';
+        nameTagTexture.drawText(
+          username,
+          null,
+          null,
+          'bold 80px Arial',
+          'white',
+          teamColor,
+          true,
+          true
+        );
+
+        const nameTagMaterial = new StandardMaterial(`player_${playerId}_nametag_mat`, scene);
+        nameTagMaterial.diffuseTexture = nameTagTexture;
+        nameTagMaterial.emissiveColor = new Color3(1, 1, 1); // Make it glow
+        nameTagMaterial.backFaceCulling = false; // Visible from both sides
+        nameTagPlane.material = nameTagMaterial;
+      }
+
       return body;
     };
 
@@ -159,6 +205,7 @@ function GameCanvas({ canvasRef, networkService }: GameCanvasProps) {
       // Reload on R key
       if (e.code === 'KeyR') {
         networkService.sendReload();
+        audioManager.playReloadSound();
       }
 
       // Weapon switching on 1-5 keys
@@ -190,18 +237,34 @@ function GameCanvas({ canvasRef, networkService }: GameCanvasProps) {
     };
 
     const handleMouseDown = (e: MouseEvent) => {
-      if (document.pointerLockElement === (canvas as unknown as Element) && e.button === 0) {
-        // Left click - shoot
-        const direction = camera.getDirection(Vector3.Forward());
-        networkService.sendShoot({
-          x: direction.x,
-          y: direction.y,
-          z: direction.z,
-        });
-
-        // Visual feedback
-        console.log('🔫 Shot fired!');
+      if (document.pointerLockElement === (canvas as unknown as Element)) {
+        if (e.button === 0) {
+          // Left click - shoot
+          const direction = camera.getDirection(Vector3.Forward());
+          networkService.sendShoot({
+            x: direction.x,
+            y: direction.y,
+            z: direction.z,
+          });
+          console.log('🔫 Shot fired!');
+        } else if (e.button === 2) {
+          // Right click - aim down sights
+          keys['Mouse1'] = true;
+          updateInputState();
+        }
       }
+    };
+
+    const handleMouseUp = (e: MouseEvent) => {
+      if (e.button === 2) {
+        keys['Mouse1'] = false;
+        updateInputState();
+      }
+    };
+
+    // Prevent context menu on right click
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
     };
 
     const updateInputState = () => {
@@ -212,7 +275,9 @@ function GameCanvas({ canvasRef, networkService }: GameCanvasProps) {
       input.right = keys['KeyD'] || false;
       input.jump = keys['Space'] || false;
       input.sprint = keys['ShiftLeft'] || keys['ShiftRight'] || false;
+      input.crouch = keys['ControlLeft'] || keys['ControlRight'] || false;
       input.shoot = keys['Mouse0'] || false;
+      input.aim = keys['Mouse1'] || false;
       input.timestamp = Date.now();
     };
 
@@ -220,6 +285,8 @@ function GameCanvas({ canvasRef, networkService }: GameCanvasProps) {
     window.addEventListener('keyup', handleKeyUp);
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mousedown', handleMouseDown);
+    window.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('contextmenu', handleContextMenu);
 
     // Send input to server at 60 FPS
     const inputInterval = setInterval(() => {
@@ -243,9 +310,33 @@ function GameCanvas({ canvasRef, networkService }: GameCanvasProps) {
       camera.rotation.y = input.mouseX;
       camera.rotation.x = input.mouseY;
 
-      // Sprint FOV effect - increase FOV when sprinting for speed sensation
-      const targetFov = input.sprint ? baseFov * 1.1 : baseFov;
-      camera.fov += (targetFov - camera.fov) * 0.1; // Smooth lerp
+      // FOV effects - ADS zoom, sprint speed sensation
+      let targetFov = baseFov;
+      if (input.aim && !input.sprint) {
+        // ADS - decrease FOV for zoom effect (can't aim while sprinting)
+        targetFov = baseFov * 0.75;
+      } else if (input.sprint && !input.aim) {
+        // Sprint - increase FOV for speed sensation
+        targetFov = baseFov * 1.1;
+      }
+      camera.fov += (targetFov - camera.fov) * 0.15; // Smooth lerp
+
+      // Movement sounds
+      const isMoving = input.forward || input.backward || input.left || input.right;
+      if (isMoving) {
+        const now = Date.now();
+        const footstepInterval = input.sprint ? 300 : 500; // Faster when sprinting
+        if (now - lastFootstepTimeRef.current > footstepInterval) {
+          audioManager.playFootstepSound();
+          lastFootstepTimeRef.current = now;
+        }
+      }
+
+      // Jump sound
+      if (input.jump && !wasJumpingRef.current) {
+        audioManager.playJumpSound();
+      }
+      wasJumpingRef.current = input.jump;
 
       // Send input to server
       networkService.sendInput(input);
@@ -279,7 +370,7 @@ function GameCanvas({ canvasRef, networkService }: GameCanvasProps) {
 
         // Create mesh if doesn't exist
         if (!mesh) {
-          mesh = createPlayerMesh(playerId, playerData.team);
+          mesh = createPlayerMesh(playerId, playerData.team, playerData.username);
           playerMeshesRef.current.set(playerId, mesh);
         }
 
@@ -312,6 +403,8 @@ function GameCanvas({ canvasRef, networkService }: GameCanvasProps) {
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mousedown', handleMouseDown);
+      window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('contextmenu', handleContextMenu);
       window.removeEventListener('resize', handleResize);
 
       // Dispose all player meshes

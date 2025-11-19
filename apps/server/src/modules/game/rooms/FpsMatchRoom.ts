@@ -12,6 +12,7 @@ interface PlayerInput {
   right: boolean;
   jump: boolean;
   sprint: boolean;
+  crouch: boolean;
   shoot: boolean;
   aim: boolean;
   mouseX: number;
@@ -56,6 +57,7 @@ export class FpsMatchRoom extends Room<FpsMatchState> {
         right: message.right,
         jump: message.jump,
         sprint: message.sprint,
+        crouch: message.crouch,
         shoot: message.shoot,
         aim: message.aim,
         mouseX: message.mouseX,
@@ -143,6 +145,7 @@ export class FpsMatchRoom extends Room<FpsMatchState> {
       right: false,
       jump: false,
       sprint: false,
+      crouch: false,
       shoot: false,
       aim: false,
       mouseX: 0,
@@ -251,10 +254,22 @@ export class FpsMatchRoom extends Room<FpsMatchState> {
       }
     }
 
-    // Calculate speed
+    // Calculate speed with modifiers
     let speed = GAME_CONSTANTS.PLAYER_SPEED;
-    if (input.sprint) {
+
+    // Sprint increases speed (can't sprint while aiming or crouching)
+    if (input.sprint && !input.aim && !input.crouch) {
       speed *= GAME_CONSTANTS.PLAYER_SPRINT_MULTIPLIER;
+    }
+
+    // Aiming decreases speed
+    if (input.aim) {
+      speed *= 0.6; // 60% speed when aiming
+    }
+
+    // Crouching decreases speed
+    if (input.crouch) {
+      speed *= 0.5; // 50% speed when crouching
     }
 
     // Apply rotation (simplified - just using mouseX for Y rotation)
@@ -276,13 +291,14 @@ export class FpsMatchRoom extends Room<FpsMatchState> {
     player.position.y += player.velocity.y * deltaTime;
     player.position.z += player.velocity.z * deltaTime;
 
-    // Ground collision (simple)
-    if (player.position.y <= 1.6) {
-      player.position.y = 1.6;
+    // Ground collision with crouch support
+    const playerHeight = input.crouch ? 1.0 : 1.6;
+    if (player.position.y <= playerHeight) {
+      player.position.y = playerHeight;
       player.velocity.y = 0;
 
-      // Jump
-      if (input.jump) {
+      // Jump (can't jump while crouching)
+      if (input.jump && !input.crouch) {
         player.velocity.y = GAME_CONSTANTS.PLAYER_JUMP_FORCE;
       }
     }
